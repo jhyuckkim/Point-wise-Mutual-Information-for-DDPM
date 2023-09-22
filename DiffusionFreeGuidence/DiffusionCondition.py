@@ -61,6 +61,8 @@ class GaussianDiffusionSampler(nn.Module):
         alphas = 1. - self.betas
         alphas_bar = torch.cumprod(alphas, dim=0)
         alphas_bar_prev = F.pad(alphas_bar, [1, 0], value=1)[:T]
+        self.register_buffer('alphas_bar', alphas_bar)
+        self.register_buffer('snr', alphas_bar / torch.sqrt(1. - alphas_bar))
         self.register_buffer('coeff1', torch.sqrt(1. / alphas))
         self.register_buffer('coeff2', self.coeff1 * (1. - alphas) / torch.sqrt(1. - alphas_bar))
         self.register_buffer('posterior_var', self.betas * (1. - alphas_bar_prev) / (1. - alphas_bar))
@@ -69,7 +71,7 @@ class GaussianDiffusionSampler(nn.Module):
         assert x_t.shape == eps.shape
         return extract(self.coeff1, t, x_t.shape) * x_t - extract(self.coeff2, t, x_t.shape) * eps
 
-    def p_mean_variance(self, x_t, t, labels):
+    def p_mean_variance(self, x_t, t, labels, get_eps=False):
         # below: only log_variance is used in the KL computations
         var = torch.cat([self.posterior_var[1:2], self.betas[1:]])
         var = extract(var, t, x_t.shape)
@@ -77,24 +79,29 @@ class GaussianDiffusionSampler(nn.Module):
         nonEps = self.model(x_t, t, torch.zeros_like(labels).to(labels.device))
         eps = (1. + self.w) * eps - self.w * nonEps
         xt_prev_mean = self.predict_xt_prev_mean_from_eps(x_t, t, eps=eps)
-        return xt_prev_mean, var
+        if get_eps:
+            return xt_prev_mean, var, eps
+        else:
+            return xt_prev_mean, var
 
-    def forward(self, x_T, labels):
-        """
-        Algorithm 2.
-        """
+    def forward(self, x_T, labels, tracking_mode=False):
         x_t = x_T
+        if tracking_mode:
+            x_hat_tensor = torch.zeros([x_T.shape[0], self.T, 3, 32, 32], dtype=x_T.dtype, device=x_T.device)
+            x_t_tensor = torch.zeros_like(x_hat_tensor)
         for time_step in reversed(range(self.T)):
-            print(time_step)
-            t = x_t.new_ones([x_T.shape[0], ], dtype=torch.long) * time_step
-            mean, var= self.p_mean_variance(x_t=x_t, t=t, labels=labels)
-            if time_step > 0:
-                noise = torch.randn_like(x_t)
+            t = x_t.new_ones([x_T.shape[0],], dtype=torch.long) * time_step
+            if tracking_mode:
+                mean, var, eps = self.p_mean_variance(x_t=x_t, t=t, labels=labels, get_eps=True)
+                alpha_bar_t = extract(self.alphas_bar, t, x_t.shape)
+                x_hat = 1 / torch.sqrt(alpha_bar_t) * (x_t - torch.sqrt(1 - alpha_bar_t) * eps)
+                x_hat_tensor[:, time_step] = x_hat
+                x_t_tensor[:, time_step] = x_t
             else:
-                noise = 0
+                mean, var = self.p_mean_variance(x_t=x_t, t=t, labels=labels)
+            noise = torch.randn_like(x_t) if time_step > 0 else 0
             x_t = mean + torch.sqrt(var) * noise
             assert torch.isnan(x_t).int().sum() == 0, "nan in tensor."
         x_0 = x_t
-        return torch.clip(x_0, -1, 1)   
-
+        return (torch.clip(x_0, -1, 1), x_hat_tensor, x_t_tensor, self.snr, self.alphas_bar) if tracking_mode else torch.clip(x_0, -1, 1)
 

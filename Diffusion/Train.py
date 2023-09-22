@@ -43,8 +43,10 @@ def train(modelConfig: Dict):
     trainer = GaussianDiffusionTrainer(
         net_model, modelConfig["beta_1"], modelConfig["beta_T"], modelConfig["T"]).to(device)
 
+    start_epoch = modelConfig.get("latest_epoch", 0)
+
     # start training
-    for e in range(modelConfig["epoch"]):
+    for e in range(start_epoch, modelConfig["epoch"]):
         with tqdm(dataloader, dynamic_ncols=True) as tqdmDataLoader:
             for images, labels in tqdmDataLoader:
                 # train
