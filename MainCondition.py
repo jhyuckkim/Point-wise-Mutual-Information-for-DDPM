@@ -1,8 +1,8 @@
 from DiffusionFreeGuidence.TrainCondition import train, eval
-
+import os
 
 def main(model_config=None):
-    modelConfig = {
+    base_model_config = {
         "state": "train", # or eval
         "epoch": 100,
         "batch_size": 80,
@@ -28,11 +28,20 @@ def main(model_config=None):
         "nrow": 8
     }
     if model_config is not None:
-        modelConfig = model_config
-    if modelConfig["state"] == "train":
-        train(modelConfig)
-    else:
-        eval(modelConfig)
+        base_model_config.update(model_config)
+
+    for i in range(10):
+        # Update save directory for each model
+        base_model_config["save_dir"] = f"./CheckpointsCondition4000/Model_{i}/"
+        print(base_model_config["save_dir"])
+        if not os.path.exists(base_model_config["save_dir"]):
+            os.makedirs(base_model_config["save_dir"])
+
+        # Train the model
+        if base_model_config["state"] == "train":
+            train(base_model_config)
+        else:
+            eval(base_model_config)
 
 
 if __name__ == '__main__':
