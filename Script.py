@@ -120,7 +120,7 @@ modelConfig = {
 }
 torch.cuda.empty_cache()
 
-for label in range(2,11):
+for label in range(1,11):
     # Generate 100 images of the given label
 
     # device = torch.device(modelConfig["device"])
@@ -146,24 +146,9 @@ for label in range(2,11):
     # del model
     # del sampler
 
-
-
-
-
-    # sampledImgs = torch.load('100_sampled_images_label_'+str(label)+'_model_0.pt')
-
-    # indices = []
-    # for i in range(100):
-    #     if get_est(sampledImgs[i], label, 0, t=0, iter=1) < 0:
-    #         indices.append(i)
-    # indices = torch.tensor(indices)
-    # torch.save(indices, 'negative_PMI_indices_label_'+str(label)+'_model_0.pt')
-
-
     print("label", label, "started")
     sampledImgs = torch.load('100_sampled_images_label_'+str(label)+'_model_0.pt')
     x_t_tensor = torch.load('100_generation_steps_label_'+str(label)+'_model_0.pt')
-    # indices = torch.load('negative_PMI_indices_label_'+str(label)+'_model_0.pt')
 
     est_list_list = []
 
@@ -171,16 +156,10 @@ for label in range(2,11):
         est_list = []
 
         for t in range(3750, 250 - 1, -250):
-            # print("t =", t)
-            # visualize_single_image(x_t_tensor[index][t-1].cpu())
             est = get_est(x_t_tensor[index][t-1], label, model_num=0, t=t, iter=5).cpu().numpy()
             est_list.append(est)
-            # print("PMI =", est)
-            # print("\n")
             print(est)
 
-        # print("t = 0")
-        # visualize_single_image(sampledImgs[index].cpu())
         est = get_est(sampledImgs[index], label, model_num=0, t=0, iter=5).cpu().numpy()
         est_list.append(est)
         # print("PMI =", est)
