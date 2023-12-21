@@ -1,6 +1,7 @@
 import torch
 import os
 from DiffusionFreeGuidence.ModelCondition import UNet
+import matplotlib.pyplot as plt
 
 def simulate_BM(x, gamma_list):
     # Given a data and list of snr, simulates a single Brownian motion path
@@ -106,3 +107,104 @@ def get_intermediate_pointwise_mutual_info(img, label, model_num, t, w=1.0):
             ito_integral += (difference * delta_W).sum()
 
     return 0.5 * standard_integral, 0.5 * standard_integral + ito_integral
+
+def visualize_single_image(image_tensor):
+    if image_tensor.shape != (3, 32, 32):
+        raise ValueError("Invalid shape")
+    image_tensor = (image_tensor + 1) / 2.0
+    image_array = image_tensor.numpy().transpose((1, 2, 0))
+    plt.imshow(image_array)
+    plt.axis('off')
+    plt.show()
+
+def visualize_25_images(image_tensor):
+    if len(image_tensor) != 25 or image_tensor.shape[1:] != (3, 32, 32):
+        raise ValueError("Invalid shape")
+        
+    fig, axes = plt.subplots(5, 5, figsize=(15, 15),
+                             subplot_kw={'xticks':[], 'yticks':[]},
+                             gridspec_kw=dict(hspace=0.1, wspace=0.1))
+
+    for i, ax in enumerate(axes.flat):
+        img = image_tensor[i].numpy().transpose((1, 2, 0))
+        img = (img + 1) / 2.0  # Assuming image was in [-1, 1], scale it back to [0, 1]
+        ax.imshow(img)
+
+    plt.show()
+
+def visualize_100_images(image_tensor):
+    if len(image_tensor) != 100 or image_tensor.shape[1:] != (3, 32, 32):
+        raise ValueError("Invalid shape")
+        
+    fig, axes = plt.subplots(10, 10, figsize=(15, 15),
+                             subplot_kw={'xticks':[], 'yticks':[]},
+                             gridspec_kw=dict(hspace=0.1, wspace=0.1))
+
+    for i, ax in enumerate(axes.flat):
+        img = image_tensor[i].numpy().transpose((1, 2, 0))
+        img = (img + 1) / 2.0  # Assuming image was in [-1, 1], scale it back to [0, 1]
+        ax.imshow(img)
+
+    plt.show()
+
+def visualize_100_images_with_est(image_tensor, num_array):
+    if len(image_tensor) != 100 or image_tensor.shape[1:] != (3, 32, 32) or len(num_array) != 100:
+        raise ValueError("Invalid shape")
+        
+    fig, axes = plt.subplots(10, 10, figsize=(15, 18),  # Adjust figure size
+                             subplot_kw={'xticks':[], 'yticks':[]},
+                             gridspec_kw=dict(hspace=0.4, wspace=0.1))
+
+    for i, ax in enumerate(axes.flat):
+        img = image_tensor[i].numpy().transpose((1, 2, 0))
+        img = (img + 1) / 2.0  # Assuming image was in [-1, 1], scale it back to [0, 1]
+        ax.imshow(img)
+        ax.text(0.5, -0.2, str(round(num_array[i], 2)), size=12, ha="center", transform=ax.transAxes)
+        
+    plt.show()
+
+def generate_and_classify_misgenerated_images(modelConfig, label, num_misgenerated_required):
+    misgenerated_images = []
+    count = 0
+
+    device = torch.device(modelConfig["device"])
+    
+    with torch.no_grad():
+        model = UNet(T=modelConfig["T"], num_labels=10, ch=modelConfig["channel"], ch_mult=modelConfig["channel_mult"],
+                        num_res_blocks=modelConfig["num_res_blocks"], dropout=modelConfig["dropout"]).to(device)
+        ckpt = torch.load(os.path.join(modelConfig["save_dir"], modelConfig["test_load_weight"]), map_location=device)
+        model.load_state_dict(ckpt)
+        model.eval()
+
+        classifier = torch.hub.load("chenyaofo/pytorch-cifar-models", "cifar10_repvgg_a2", pretrained=True)
+        classifier = classifier.to(modelConfig["device"])
+        classifier.eval()
+
+        sampler = GaussianDiffusionSampler(
+            model, modelConfig["beta_1"], modelConfig["beta_T"], modelConfig["T"], w=modelConfig["w"]).to(device)
+
+        while count < num_misgenerated_required:
+            noisyImage = torch.randn(
+                size=[modelConfig["batch_size"], 3, modelConfig["img_size"], modelConfig["img_size"]], device=device)
+            sampledImgs = sampler(noisyImage, torch.tensor([label]*modelConfig["batch_size"]).to(device))
+
+            output = classifier(sampledImgs)
+            _, predicted = torch.max(output.data, 1)
+            predicted_labels = predicted + 1
+
+            indices_not_equal = torch.nonzero(predicted_labels != label).squeeze()
+            if len(indices_not_equal) > 0:
+                misgenerated_images.extend(sampledImgs[indices_not_equal])
+                count += len(indices_not_equal)
+
+    # Save the misgenerated images
+    torch.save(misgenerated_images, f"misgenerated_images_label_{label}_4000steps.pt") # remove
+
+    return misgenerated_images
+
+def get_est(Img, label, model_num, t, iter=5):
+    result = 0
+    for _ in range(iter):
+        _, est = get_intermediate_pointwise_mutual_info(Img, label, model_num, t)
+        result += est
+    return result/iter
